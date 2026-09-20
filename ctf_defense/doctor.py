@@ -100,15 +100,15 @@ class EnvironmentDoctor:
                 break
 
     def check_network(self) -> None:
-        """Verify loopback socket binding."""
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1.0)
-            s.connect(("127.0.0.1", 80))
-            s.close()
-            safe_print(f" [✓] Port 80 (HTTP)      : {colorize('LISTENING & CONNECTABLE', Colors.GREEN)}")
-        except Exception:
-            safe_print(f" [.] Port 80 (HTTP)      : {colorize('Port 80 not currently open on localhost', Colors.DIM)}")
+        """Verify loopback socket binding on active and standard web ports."""
+        from .environment import get_listening_ports
+        active_ports = get_listening_ports()
+        web_ports = [p for p in active_ports if p in (80, 8080, 5000, 8000, 3000, 8888, 9000, 443)]
+        if web_ports:
+            for wp in web_ports:
+                safe_print(f" [✓] Web Port [{wp:<5}]      : {colorize('LISTENING & CONNECTABLE', Colors.GREEN)}")
+        else:
+            safe_print(f" [.] Web Ports           : {colorize('No HTTP port currently listening (start web service first)', Colors.YELLOW)}")
 
     def run_diagnostics(self) -> None:
         """Execute full doctor suite."""

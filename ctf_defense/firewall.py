@@ -3,6 +3,7 @@
 
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 from typing import List, Optional
@@ -64,7 +65,7 @@ def run_firewall_setup(
     safe_print(colorize("\n[*] Menerapkan aturan UFW...", Colors.YELLOW))
     for c in cmds:
         try:
-            subprocess.run(c.split(), check=True, capture_output=True, text=True, timeout=5)
+            subprocess.run(shlex.split(c), check=True, capture_output=True, text=True, timeout=5)
             safe_print(f"  [✓] Sukses: {c}")
         except Exception as e:
             safe_print(f"  [✗] Gagal: {c} ({e})")

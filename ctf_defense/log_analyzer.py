@@ -72,12 +72,22 @@ class LogEntry:
             except Exception:
                 break
 
+        # Query-string semantics: '+' = spasi (seperti $_GET PHP). Varian
+        # plus-decoded ditambahkan agar evasion 'cat+/flag' tetap terdeteksi.
+        plus_decoded = current.replace("+", " ")
+
         # Extract payload part (query string or path parameters)
-        if "?" in current:
-            _, query_part = current.split("?", 1)
-            payload = query_part
-        else:
-            payload = current
+        variants = [current]
+        if plus_decoded != current:
+            variants.append(plus_decoded)
+
+        payloads = []
+        for variant in variants:
+            if "?" in variant:
+                payloads.append(variant.split("?", 1)[1])
+            else:
+                payloads.append(variant)
+        payload = "\n".join(payloads)
 
         return current, payload
 
@@ -107,7 +117,10 @@ class LogAnalyzer:
         self.ignore_static = ignore_static
         self.whitelist_ips = whitelist_ips or {"127.0.0.1", "::1", "localhost"}
         self.seen_signatures: set = set()
-        self.stats = {"total": 0, "attacks": 0, "normal": 0, "critical": 0, "ignored_ips": 0}
+        self.ip_sig_counts: Dict[str, int] = {}
+        self._sig_weights = {"CRITICAL": 3, "HIGH": 2, "MEDIUM": 1, "LOW": 1}
+        self.stats = {"total": 0, "attacks": 0, "normal": 0, "critical": 0,
+                      "ignored_ips": 0, "suspicious": 0}
 
     @classmethod
     def resolve_log_path(cls, custom_path: Optional[str]) -> Optional[Path]:
@@ -180,19 +193,44 @@ class LogAnalyzer:
                 self.stats["normal"] += 1
                 return entry
 
-        inspect_target = f"{entry.method} {entry.uri} {entry.decoded_uri} {entry.raw_line}"
+        # Anti-FP two-stage detection:
+        #   Stage 1: signature match pada PAYLOAD (uri decoded) -> sinyal kuat (1x weight)
+        #   Stage 2: signature hanya pada raw_line (UA/referer) -> sinyal lemah (0.5x)
+        payload_target = f"{entry.method} {entry.uri} {entry.decoded_uri}"
+        matched_payload = [s for s in SIGNATURES if s.pattern.search(payload_target)]
+        matched_raw_only = [s for s in SIGNATURES
+                            if s not in matched_payload and s.pattern.search(entry.raw_line)]
 
-        matched_signatures = []
-        for sig in SIGNATURES:
-            if sig.pattern.search(inspect_target):
-                matched_signatures.append(sig)
+        score = sum(self._sig_weights[s.severity] for s in matched_payload)
+        score += sum(0.5 for s in matched_raw_only)
 
+        matched_signatures = matched_payload + matched_raw_only
         if matched_signatures:
             entry.matches = matched_signatures
-            entry.is_attack = True
 
-            # Determine highest severity
-            severities = [s.severity for s in matched_signatures]
+            # Konfirmasi serangan (anti false-positive):
+            #   (a) ada sinyal HIGH/CRITICAL pada payload, atau
+            #   (b) >= 2 kategori berbeda dalam 1 request, atau
+            #   (c) skor total >= 2.5, atau
+            #   (d) IP yang sama spam sinyal berulang (>= 3 dalam sesi)
+            self.ip_sig_counts[entry.ip] = self.ip_sig_counts.get(entry.ip, 0) + 1
+            distinct_cats = {s.category for s in matched_payload}
+            confirmed = (
+                any(s.severity in ("CRITICAL", "HIGH") for s in matched_payload)
+                or len(distinct_cats) >= 2
+                or score >= 2.5
+                or self.ip_sig_counts[entry.ip] >= 3
+            )
+
+            if not confirmed:
+                # Sinyal lemah: dicatat untuk analis, TIDAK dihitung serangan & TIDAK direplay
+                entry.severity = "SUSPICIOUS"
+                self.stats["suspicious"] += 1
+                self._save_attack_payload(entry)
+                return entry
+
+            entry.is_attack = True
+            severities = [s.severity for s in matched_payload] or ["MEDIUM"]
             if "CRITICAL" in severities:
                 entry.severity = "CRITICAL"
                 self.stats["critical"] += 1
@@ -395,6 +433,7 @@ def monitor_logs(
         safe_print(f"   * Normal Traffic Requests  : {analyzer.stats['normal']}")
         safe_print(f"   * Attacks Detected         : {colorize(str(analyzer.stats['attacks']), Colors.BRIGHT_RED)}")
         safe_print(f"   * Critical RCE Exploits    : {colorize(str(analyzer.stats['critical']), Colors.BRIGHT_RED + Colors.BOLD)}")
+        safe_print(f"   * Suspicious (Anti-FP Hold): {colorize(str(analyzer.stats.get('suspicious', 0)), Colors.YELLOW)}")
         safe_print(f"   * Payloads Saved To        : {analyzer.save_file} and {analyzer.save_file.with_suffix('.txt')}")
         safe_print(colorize("[*] Monitor stopped cleanly.", Colors.GREEN))
 

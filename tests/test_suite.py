@@ -47,6 +47,12 @@ class MockCTFHttpServer(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"<html><body><h1>Team Web Service</h1></body></html>")
 
+    def do_POST(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"status": "success", "message": "Flag accepted!"}')
+
     def log_message(self, format, *args):
         pass
 
@@ -200,6 +206,127 @@ class TestCTFDefenseFramework(unittest.TestCase):
         self.assertIn("LFI", categories)
         self.assertIn("RCE", categories)
         self.assertIn("SSTI", categories)
+
+    def test_e2e_pipeline_execution(self):
+        from ctf_defense.pipeline import run_e2e_pipeline
+
+        # Run pipeline against mock environment
+        test_root = os.path.abspath(".")
+        res = run_e2e_pipeline(web_root=test_root, start_port=self.server_port)
+        self.assertEqual(res, 0)
+
+    def test_custom_flag_regex_compiler(self):
+        from ctf_defense.patterns import compile_flag_regex
+
+        universal = compile_flag_regex()
+        self.assertTrue(universal.search("Found FLAG{abc123_456}"))
+        self.assertTrue(universal.search("Found JCSC{secret_flag_2026}"))
+        self.assertTrue(universal.search("Found CTF{winner_flag_777}"))
+
+        custom = compile_flag_regex(r"JATIM\{[0-9a-f]{32}\}")
+        self.assertTrue(custom.search("Target JATIM{0123456789abcdef0123456789abcdef}"))
+        self.assertFalse(custom.search("Target FLAG{fake_flag}"))
+
+    def test_flag_submitter_persistent_queue(self):
+        from ctf_defense.flag_submitter import FlagSubmitter, get_queue_db
+
+        test_db = "test_queue.db"
+        if Path(test_db).exists():
+            try:
+                Path(test_db).unlink()
+            except Exception:
+                pass
+
+        sub = FlagSubmitter(
+            server_url=f"http://127.0.0.1:{self.server_port}/api/secret",
+            db_path=test_db,
+        )
+        sub.enqueue_flag("FLAG{test_queue_123}", token="team_1")
+        
+        # Verify stored in SQLite
+        conn = get_queue_db(test_db)
+        row = conn.execute("SELECT * FROM flag_queue WHERE flag = 'FLAG{test_queue_123}'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "PENDING")
+        conn.close()
+
+        # Process queue against mock server
+        processed = sub.process_queue()
+        self.assertGreaterEqual(processed, 1)
+
+        # Cleanup
+        if Path(test_db).exists():
+            try:
+                Path(test_db).unlink()
+            except Exception:
+                pass
+
+    def test_autopatch_transformers(self):
+        from ctf_defense.autopatch import PHP_TRANSFORMERS
+
+        # 1. LFI transformation
+        lfi_code = "include('pages/' . $_GET['page'] . '.php');"
+        for cat, rx, fn, _ in PHP_TRANSFORMERS:
+            if cat == "LFI" and rx.search(lfi_code):
+                patched = rx.sub(fn, lfi_code)
+                self.assertIn("basename($_GET['page'])", patched)
+
+        # 2. SQLi numeric id transformation
+        sqli_code = "$id = $_GET['id'];"
+        for cat, rx, fn, _ in PHP_TRANSFORMERS:
+            if "SQLi" in cat and rx.search(sqli_code):
+                patched = rx.sub(fn, sqli_code)
+                self.assertIn("(int)$_GET['id']", patched)
+
+    def test_environment_detector_frameworks(self):
+        import tempfile
+        from ctf_defense.environment import detect_environment
+
+        # 1. Test Laravel Detection
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "artisan").write_text("#!/usr/bin/env php\n", encoding="utf-8")
+            os.makedirs(os.path.join(tmpdir, "public"), exist_ok=True)
+            Path(tmpdir, "public", "index.php").write_text("<?php echo 'Laravel'; ?>", encoding="utf-8")
+            os.makedirs(os.path.join(tmpdir, "storage", "framework"), exist_ok=True)
+
+            env = detect_environment(custom_webroot=tmpdir)
+            self.assertEqual(env.language, "php")
+            self.assertEqual(env.framework, "laravel")
+            self.assertTrue(env.public_webroot.endswith("public"))
+            self.assertTrue(any("storage" in w for w in env.writable_dirs))
+
+        # 2. Test Flask Detection
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "app.py").write_text("from flask import Flask\napp = Flask(__name__)\n", encoding="utf-8")
+            env = detect_environment(custom_webroot=tmpdir)
+            self.assertEqual(env.language, "python")
+            self.assertEqual(env.framework, "flask")
+
+        # 3. Test Node.js Express Detection
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "package.json").write_text('{"dependencies": {"express": "^4.18.2"}}', encoding="utf-8")
+            Path(tmpdir, "server.js").write_text("const express = require('express');", encoding="utf-8")
+            env = detect_environment(custom_webroot=tmpdir)
+            self.assertEqual(env.language, "node")
+            self.assertEqual(env.framework, "express")
+
+    def test_exploit_payloads_arsenal(self):
+        from ctf_defense.exploit_payloads import (
+            ALL_PAYLOADS,
+            get_payloads_for_category,
+            get_flag_hunting_payloads,
+            get_quick_recon_payloads,
+        )
+
+        self.assertGreaterEqual(len(ALL_PAYLOADS), 25)
+        sqli_payloads = get_payloads_for_category("SQLi")
+        self.assertGreaterEqual(len(sqli_payloads), 5)
+        rce_payloads = get_payloads_for_category("RCE")
+        self.assertGreaterEqual(len(rce_payloads), 5)
+        flag_hunting = get_flag_hunting_payloads()
+        self.assertGreaterEqual(len(flag_hunting), 10)
+        quick_recon = get_quick_recon_payloads()
+        self.assertGreaterEqual(len(quick_recon), 5)
 
     @classmethod
     def tearDown(cls):

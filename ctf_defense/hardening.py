@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .colors import Colors, colorize, print_banner, safe_print
 
@@ -140,8 +140,12 @@ def run_hardening_check(web_root: str = ROOT_DEFAULT) -> int:
     return 0
 
 
-def run_hardening_apply(web_root: str = ROOT_DEFAULT, lock_binaries: bool = True) -> int:
-    """Apply recommended system hardening settings."""
+def run_hardening_apply(
+    web_root: str = ROOT_DEFAULT,
+    lock_binaries: bool = True,
+    writable_dirs: Optional[List[str]] = None,
+) -> int:
+    """Apply recommended system hardening settings with framework storage preservation."""
     print_banner("Applying System Hardening", "Automated Remediation")
 
     # 1. Lock dangerous compilers/binaries to root-only (chmod 700)
@@ -188,6 +192,24 @@ def run_hardening_apply(web_root: str = ROOT_DEFAULT, lock_binaries: bool = True
             safe_print(f"  [✓] Permissions dirapikan pada {web_root}")
         except Exception as e:
             safe_print(f"  [!] Permission error: {e}")
+
+        # 4. Preserve write access for framework storage/cache/uploads directories (Laravel, Django, Symfony)
+        if writable_dirs:
+            safe_print(colorize("\n[4] Mengamankan izin tulis framework storage/cache (chmod 775)...", Colors.YELLOW))
+            for wdir in writable_dirs:
+                if os.path.isdir(wdir):
+                    try:
+                        os.chmod(wdir, 0o775)
+                        for r, ds, fs in os.walk(wdir):
+                            for d in ds:
+                                try: os.chmod(os.path.join(r, d), 0o775)
+                                except Exception: pass
+                            for f in fs:
+                                try: os.chmod(os.path.join(r, f), 0o664)
+                                except Exception: pass
+                        safe_print(f"  [✓] Storage dir dijaga: {wdir} (775/664)")
+                    except Exception as e:
+                        safe_print(f"  [!] Gagal set permission storage {wdir}: {e}")
 
     safe_print(colorize("\n[✓] Hardening selesai diaplikasikan.", Colors.BOLD + Colors.BRIGHT_GREEN))
     return 0

@@ -32,6 +32,35 @@ WEBSHELL_PATTERNS = [
 ]
 
 
+CORE_FILE_NAMES = {
+    "index.php", "config.php", "wp-config.php", "app.py", "main.py", "wsgi.py",
+    "settings.py", "urls.py", "db.php", "database.php", "connect.php",
+    "manage.py", "server.js", "app.js",
+}
+
+
+def _shannon_entropy(data: str) -> float:
+    """Entropi Shannon (bit/karakter) untuk deteksi blob obfuscated."""
+    if not data:
+        return 0.0
+    import math
+    from collections import Counter
+    counts = Counter(data)
+    n = len(data)
+    return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
+
+def _has_obfuscated_blob(content: str, min_len: int = 120) -> bool:
+    """Deteksi blob base64/hex panjang berentropi tinggi (indikasi kode obfuscated)."""
+    for blob in re.findall(r"[A-Za-z0-9+/=]{%d,}" % min_len, content):
+        if _shannon_entropy(blob) >= 4.2:
+            return True
+    for blob in re.findall(r"[0-9a-fA-F]{%d,}" % (min_len + 40), content):
+        if _shannon_entropy(blob) >= 3.9:
+            return True
+    return False
+
+
 def find_webshells(
     target_dir: str = ROOT_DEFAULT,
     max_modified_mins: Optional[int] = None,
@@ -41,13 +70,25 @@ def find_webshells(
     findings = []
     now = time.time()
 
+    SKIP_DIRS = {".git", ".svn", "ctf_defense", "docs", "tests", "vendor", "node_modules", ".adctf", "__pycache__"}
+    SKIP_FILES = {"ctf_waf.py", "ctf_waf.php", "adctf.py"}
+    VALID_EXTS = {".php", ".phtml", ".php3", ".php4", ".php5", ".php7", ".inc", ".py", ".pl", ".cgi", ".sh", ".jsp", ".asp", ".aspx", ".jpg", ".png", ".gif", ".ico", ".txt", ".bak"}
+
     for base, dirs, files in os.walk(target_dir):
-        # Ignore git/svn
-        dirs[:] = [d for d in dirs if d not in {".git", ".svn"}]
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
 
         for fname in files:
+            if fname in SKIP_FILES:
+                continue
+
             path = os.path.join(base, fname)
             ext = os.path.splitext(fname)[1].lower()
+
+            # Ignore markdown and documentation
+            if ext in {".md", ".json", ".lock", ".yml", ".yaml"}:
+                continue
+            if ext not in VALID_EXTS and not fname.startswith("."):
+                continue
 
             # 1. Hidden file or suspicious double extension (.shell.php, .image.php, ...php)
             is_hidden = fname.startswith(".") and ext == ".php"
@@ -70,28 +111,74 @@ def find_webshells(
                 continue
 
             matches = []
+            score = 0
             for sev, rx, desc in WEBSHELL_PATTERNS:
                 m = rx.search(content)
                 if m:
                     matches.append((sev, desc, m.group(0)[:60]))
+                    score += {"CRITICAL": 4, "HIGH": 2, "MEDIUM": 1}.get(sev, 1)
 
-            if matches or is_hidden or is_suspicious_name:
-                sev = "CRITICAL" if any(x[0] == "CRITICAL" for x in matches) else ("HIGH" if any(x[0] == "HIGH" for x in matches) else "MEDIUM")
+            has_critical = any(x[0] == "CRITICAL" for x in matches)
+
+            # Anti-FP multi-signal scoring:
+            #   sinyal lemah (hidden / nama aneh / baru diubah / blob obfuscated)
+            #   TIDAK PERNAH cukup sendirian untuk mengonfirmasi.
+            n_signals = len(matches)
+            if is_hidden:
+                score += 1
+                n_signals += 1
+            if is_suspicious_name:
+                score += 1
+                n_signals += 1
+            if mins_ago < 10:
+                score += 1
+                n_signals += 1
+            if _has_obfuscated_blob(content):
+                score += 1
+                n_signals += 1
+
+            # File inti framework tidak di-flag tanpa bukti CRITICAL (proteksi SLA)
+            if fname.lower() in CORE_FILE_NAMES and not has_critical:
+                score = 0
+
+            # Konfirmasi: bukti CRITICAL langsung, atau skor >= 3 DENGAN >= 2 sinyal independen
+            if has_critical or (score >= 3 and n_signals >= 2):
+                sev = "CRITICAL" if has_critical else ("HIGH" if score >= 5 else "MEDIUM")
                 findings.append({
                     "path": path,
                     "filename": fname,
                     "severity": sev,
+                    "score": score,
                     "is_hidden": is_hidden,
                     "mins_ago": mins_ago,
                     "matches": matches,
                     "snippet": matches[0][2] if matches else (fname if is_hidden else "Suspicious extension"),
                 })
 
+    # Protected core files that should NEVER be quarantined automatically (to protect SLA)
+    PROTECTED_CORE_FILES = {
+        "index.php", "config.php", "wp-config.php", "app.py", "main.py", "wsgi.py",
+        "settings.py", "urls.py", "db.php", "database.php", "connect.php",
+        "ctf_waf.php", "ctf_waf.py", "manage.py", "server.js", "app.js"
+    }
+
     # Optional quarantine
     if quarantine_dir and findings:
         os.makedirs(quarantine_dir, exist_ok=True)
         for item in findings:
             src = item["path"]
+            fname = os.path.basename(src).lower()
+
+            # Anti-FP: hanya karantina temuan yang yakin (CRITICAL / skor >= 5)
+            if item.get("severity") != "CRITICAL" and (item.get("score") or 0) < 5:
+                item["quarantined"] = "SKIPPED (Confidence insufficient - manual review)"
+                continue
+
+            # Skip core files from automatic quarantine to prevent SLA disaster
+            if fname in PROTECTED_CORE_FILES:
+                item["quarantined"] = "SKIPPED (Core Framework File - Manual Review Only)"
+                continue
+
             dst = os.path.join(quarantine_dir, os.path.basename(src) + ".quarantine")
             try:
                 shutil.move(src, dst)
@@ -122,7 +209,7 @@ def run_webshell_hunter(
     safe_print(colorize(f"\n[!] DITEMUKAN {len(findings)} POTENSI WEBSHELL / BACKDOOR:", Colors.BOLD + Colors.BRIGHT_RED))
     for f in findings:
         badge = colorize(f"[{f['severity']}]", Colors.BG_RED + Colors.BOLD + Colors.WHITE if f['severity'] == "CRITICAL" else Colors.BRIGHT_RED)
-        safe_print(f"\n {badge} {colorize(f['path'], Colors.BOLD + Colors.BRIGHT_WHITE)} (Diubah {f['mins_ago']:.1f} mnt lalu)")
+        safe_print(f"\n {badge} {colorize(f['path'], Colors.BOLD + Colors.BRIGHT_WHITE)} (Diubah {f['mins_ago']:.1f} mnt lalu | Skor {f.get('score', '?')})")
         for _, desc, snip in f["matches"]:
             safe_print(f"   └─ Indikasi: {colorize(desc, Colors.YELLOW)} -> {colorize(snip, Colors.CYAN)}")
         if f.get("is_hidden"):

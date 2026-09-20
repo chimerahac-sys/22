@@ -287,17 +287,43 @@ python3 adctf.py waf --type php --out /tmp/ctf_waf.php
 
 | Perintah | Deskripsi Fungsi |
 |---|---|
-| `python3 adctf.py doctor` | Cek kesiapan Python, tool Linux, izin log, dan webroot |
-| `python3 adctf.py triage` | Audit kilat spek server, port, database, dan koneksi aktif |
-| `python3 adctf.py start` | Full backup web & DB terverifikasi + Git init baseline |
+| `python3 adctf.py start` | ⚡ **1-Command Auto-Defense** (Backup + Hardening + WAF + Scan + SLA) |
+| `python3 adctf.py autopilot` | ★ **Autopilot Battle Mode** (Live Radar + Anti-Loop Replay + Auto-Submit) |
+| `python3 adctf.py autopatch` | 🩹 **1-Click Auto-Patcher** (Patch LFI/SQLi/RCE/SSTI/Pickle dengan auto-rollback) |
+| `python3 adctf.py doctor` | Pre-flight diagnostic kesiapan host & environment |
+| `python3 adctf.py triage` | Audit kilat spek server, port, user, cron, dan koneksi aktif |
+| `python3 adctf.py hardening` | Audit dan pasang konfigurasi sysctl + permissions 644/755 |
+| `python3 adctf.py firewall` | Pasang firewall UFW minimalis + whitelist IP Juri |
+| `python3 adctf.py webshell` | Deep hunter backdoor, eval/system, dan file termodifikasi baru |
 | `python3 adctf.py scan` | Scan static vulnerability pada PHP, Python, JS |
 | `python3 adctf.py next` | Tampilkan 1 bug prioritas dengan context code & cara patch |
-| `python3 adctf.py done` | Verifikasi perubahan kode & tandai bug selesai |
+| `python3 adctf.py done` | Verifikasi perubahan kode & tandai bug selesai di checklist SQLite |
 | `python3 adctf.py list` | Tampilkan checklist progress patch (✅ / ⬜) |
 | `python3 adctf.py watch` | Monitor log realtime & rekam payload serangan lawan berwarna |
-| `python3 adctf.py check` | Uji kesehatan layanan & SLA web lokal/remote |
+| `python3 adctf.py check` | Uji kesehatan layanan & verifikasi SLA web HTTP 200 OK |
 | `python3 adctf.py attack <IP>` | Replay payload musuh ke tim lawan secara paralel |
-| `python3 adctf.py submit` | Otomasi submit batch flag ke Scoring Server |
+| `python3 adctf.py probe` | Tembak 1 target / subnet lawan dengan custom exploit payload |
+| `python3 adctf.py submit` | Otomasi submit batch flag ke Scoring Server dengan antrean retry |
 | `python3 adctf.py waf` | Generate micro-WAF drop-in untuk PHP / Python Flask |
 | `python3 adctf.py restore` | Pulihkan webroot dari backup archive tar.gz |
-| `python3 adctf.py` | Buka Menu Terminal Interaktif |
+| `python3 adctf.py patch-guide`| Tampilkan katalog contekan patch code before-after |
+
+---
+
+## 📚 8. Perpustakaan Cheat Sheet Lengkap (`docs/references/`)
+
+Buka file-file panduan spesifik ini saat menghadapi skenario tertentu saat lomba:
+
+| Nama File Panduan | Deskripsi & Kegunaan Utama |
+|---|---|
+| ⚡ [`ULTIMATE-QUICK-REFERENCE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/ULTIMATE-QUICK-REFERENCE.md) | **1 Halaman Darurat**: Command paling vital menit 0-2, quick exploit, quick fix, anti-panik. |
+| 🚨 [`LINUX-EMERGENCY-BIBLE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/LINUX-EMERGENCY-BIBLE.md) | **Kamus Linux Lengkap**: Kill process backdoor, hunting cron, network forensics, user/SSH keys. |
+| 🐘 [`PHP-VULN-PATCH-BIBLE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/PHP-VULN-PATCH-BIBLE.md) | **Buku Sakti PHP**: SQLi PDO/MySQLi, LFI wrappers, RCE, upload bypass, type juggling, deser. |
+| 🐍 [`PYTHON-FLASK-FASTAPI-BIBLE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/PYTHON-FLASK-FASTAPI-BIBLE.md) | **Buku Sakti Python**: SSTI Jinja2, Pickle/YAML deser, shell=True, SQLite/MySQL, weak secret key. |
+| 🗄️ [`MYSQL-DEFENSE-BIBLE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/MYSQL-DEFENSE-BIBLE.md) | **Database Defense & Offense**: Reset root pass, backup/restore, revoke grant, SQLi union/error/blind. |
+| 🕷️ [`REVERSE-SHELL-BACKDOOR-BIBLE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/REVERSE-SHELL-BACKDOOR-BIBLE.md) | **Backdoor & Shell Guide**: Deteksi 14 jenis webshell, pembersihan, flag reader curl tanpa reverse shell. |
+| 🧱 [`WEBSERVER-HARDENING-BIBLE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/WEBSERVER-HARDENING-BIBLE.md) | **Nginx & Apache Hardening**: Copy-paste config anti-webshell, disable PHP di uploads, php.ini. |
+| 🚩 [`FLAG-HUNTING-BIBLE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/FLAG-HUNTING-BIBLE.md) | **Offensive Flag Stealer**: Cara curi flag via LFI/SQLi/RCE/SSTI/webshell + script loop semua tim. |
+| 📡 [`TRAFFIC-ANALYSIS-WIRESHARK-TCPDUMP.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/TRAFFIC-ANALYSIS-WIRESHARK-TCPDUMP.md) | **Packet Sniffing**: tcpdump 1-liners, ngrep flag live, tshark PCAP parser, Wireshark filters. |
+| 🛡️ [`SLA-PROTECTION-SURVIVAL-GUIDE.md`](file:///c:/Users/Good-User/Downloads/cyber/docs/references/SLA-PROTECTION-SURVIVAL-GUIDE.md) | **SLA Debugging**: Solusi instan error HTTP 403, 500, 502, 504, MySQL crash, checklist uji SLA. |
+

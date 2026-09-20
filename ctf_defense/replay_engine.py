@@ -142,8 +142,24 @@ class ReplayEngine:
         safe_print("")
 
         if not attacks:
-            safe_print(colorize(f"[!] No attacks found in {attacks_file}. Run 'defense_tool.py monitor' first!", Colors.BRIGHT_RED))
-            return
+            safe_print(colorize(f"[*] Belum ada serangan terekam di {attacks_file}.", Colors.YELLOW))
+            safe_print(colorize("[*] Beralih otomatis ke Arsenal Exploit Payload Bawaan (SQLi, LFI, RCE, SSTI)...", Colors.BRIGHT_CYAN))
+            try:
+                import urllib.parse
+                from .exploit_payloads import ALL_PAYLOADS
+                attacks = [
+                    {
+                        "method": p.method,
+                        "uri": f"{p.endpoint}?{p.param}={urllib.parse.quote(p.payload)}" if p.method == "GET" else p.endpoint,
+                        "body": f"{p.param}={urllib.parse.quote(p.payload)}" if p.method == "POST" else "",
+                        "signatures": [p.category],
+                    }
+                    for p in ALL_PAYLOADS
+                ]
+                safe_print(colorize(f"[✓] Berhasil memuat {len(attacks)} senjata payload bawaan untuk dipantulkan ke target!\n", Colors.BOLD + Colors.BRIGHT_GREEN))
+            except Exception:
+                safe_print(colorize(f"[!] No attacks found in {attacks_file}.", Colors.BRIGHT_RED))
+                return
 
         for a_idx, attack in enumerate(attacks, 1):
             method = attack.get("method", "GET")

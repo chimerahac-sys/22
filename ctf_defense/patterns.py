@@ -204,6 +204,66 @@ SIGNATURES: List[AttackSignature] = [
         ),
         description="Client-side script execution or cookie exfiltration tags.",
     ),
+
+    # -------------------------------------------------------------
+    # 7. SERVER-SIDE REQUEST FORGERY & CLOUD METADATA (HIGH)
+    # -------------------------------------------------------------
+    AttackSignature(
+        id="SSRF_PROBE",
+        name="Server-Side Request Forgery (SSRF) Probe",
+        category="SSRF",
+        severity="HIGH",
+        pattern=re.compile(
+            r"(?:https?://(?:127\.0\.0\.1|localhost|0\.0\.0\.0|169\.254\.169\.254|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|\[::1\])|gopher://|dict://|file:///[a-z0-9_/]+)",
+            re.IGNORECASE,
+        ),
+        description="SSRF targeting internal network interfaces, loopback, or cloud metadata endpoints.",
+    ),
+
+    # -------------------------------------------------------------
+    # 8. XML EXTERNAL ENTITY INJECTION (HIGH)
+    # -------------------------------------------------------------
+    AttackSignature(
+        id="XXE_PROBE",
+        name="XML External Entity (XXE) Injection",
+        category="XXE",
+        severity="HIGH",
+        pattern=re.compile(
+            r"(?:<!ENTITY\s+\w+\s+SYSTEM\s+['\"](?:file|http|php|expect)://|<!DOCTYPE\s+\w+\s+\[|%[a-zA-Z0-9_]+;\s*\]>)",
+            re.IGNORECASE,
+        ),
+        description="XXE injection targeting local files (/etc/passwd, /flag) via XML entities.",
+    ),
+
+    # -------------------------------------------------------------
+    # 9. NOSQL INJECTION & MONGODB (HIGH)
+    # -------------------------------------------------------------
+    AttackSignature(
+        id="NOSQLI_PROBE",
+        name="NoSQL Injection (MongoDB/CouchDB)",
+        category="NOSQLI",
+        severity="HIGH",
+        pattern=re.compile(
+            r"(?:\[\$(?:ne|gt|gte|lt|lte|regex|in|nin|where|exists)\]|[\"']\$(?:ne|gt|gte|lt|lte|regex|in|nin|where|exists)[\"']\s*:)",
+            re.IGNORECASE,
+        ),
+        description="NoSQL operator injection bypassing authentication or dumping collections.",
+    ),
+
+    # -------------------------------------------------------------
+    # 10. TYPE JUGGLING & ARRAY PARAMETER INJECTION (MEDIUM)
+    # -------------------------------------------------------------
+    AttackSignature(
+        id="TYPE_JUGGLING_PROBE",
+        name="PHP Type Juggling / Array Parameter Injection",
+        category="AUTH",
+        severity="MEDIUM",
+        pattern=re.compile(
+            r"(?:(?:password|token|hash|secret|pin|otp)\[\]=|0e\d{10,}|strcmp\s*\(.*?\[\])",
+            re.IGNORECASE,
+        ),
+        description="Array parameter injection exploiting PHP loose comparison (==) or strcmp bypass.",
+    ),
 ]
 
 # Static assets extensions that are generally benign unless accompanied by explicit malicious payload
@@ -229,7 +289,22 @@ COMBINED_LOG_REGEX = re.compile(
 COMMON_LOG_REGEX = re.compile(
     r'^(?P<ip>\S+)\s+\S+\s+\S+\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Za-z]+)\s+(?P<uri>[^\s"]+)(?:\s+HTTP/\d\.\d)?"\s+(?P<status>\d{3})\s+(?P<bytes>\S+)'
 )
-FLAG_REGEX = re.compile(r"(?:FLAG|flag|CTF)\{[A-Za-z0-9_\-]{8,64}\}")
+# Universal CTF Flag Format Matcher (Matches FLAG{...}, JCSC{...}, CTF{...}, etc.)
+# Known CTF flag prefixes saja - wildcard [A-Za-z0-9_]{3,10} dihapus (sumber FP besar:
+# men-match teks seperti test{...} / data{...} di JSON & HTML biasa)
+KNOWN_FLAG_PREFIXES = r"(?:FLAG|flag|CTF|ctf|JCSC|jcsc|HTB|picoCTF|SKR|COMPFEST|JOINTS|CF|UTCTF|ictf|CYBER|cyber)"
+FLAG_REGEX = re.compile(KNOWN_FLAG_PREFIXES + r"\{[A-Za-z0-9_\-\.\=\+\$!@#%]{8,96}\}")
+
+
+def compile_flag_regex(custom_pattern: str = None) -> re.Pattern:
+    """Compile custom flag regex or return universal default CTF flag regex."""
+    if custom_pattern:
+        try:
+            return re.compile(custom_pattern, re.IGNORECASE)
+        except re.error:
+            pass
+    return FLAG_REGEX
+
 
 # Tuple format of rules for fast iteration
 ATTACK_RULES = [

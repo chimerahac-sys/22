@@ -107,11 +107,24 @@ class HealthChecker:
     """Automated service health checker with rate-limiting and regex token extractor."""
 
     DEFAULT_FLAG_PATTERNS = [
-        r"FLAG\{[A-Za-z0-9_\-]{16,64}\}",
-        r"flag\{[A-Za-z0-9_\-]{16,64}\}",
-        r"CTF\{[A-Za-z0-9_\-]{16,64}\}",
-        r"[A-Za-z0-9]{32}=",
+        # Known CTF prefixes only - broad wildcard dihapus untuk anti false-positive
+        r"(?:FLAG|flag|CTF|ctf|JCSC|jcsc|HTB|picoCTF|SKR|COMPFEST|JOINTS|CF|UTCTF|ictf)\{[A-Za-z0-9_\-]{8,96}\}",
     ]
+
+    @staticmethod
+    def _token_quality(token: str) -> bool:
+        """Anti false-positive: validasi entropi & format sebelum menyimpan token."""
+        import math
+        from collections import Counter
+        if len(token) < 12:
+            return False
+        low = token.lower()
+        if any(x in low for x in ("stylesheet", "javascript", "doctype", "bootstrap", "jquery", "template")):
+            return False
+        counts = Counter(token)
+        n = len(token)
+        entropy = -sum((c / n) * math.log2(c / n) for c in counts.values())
+        return entropy >= 3.2  # token acak = entropi tinggi; teks biasa lebih rendah
 
     def __init__(
         self,
@@ -226,7 +239,7 @@ class HealthChecker:
                 matches = pattern.findall(response_text)
                 for m in matches:
                     token_val = m if isinstance(m, str) else m[0]
-                    if token_val not in extracted:
+                    if token_val not in extracted and self._token_quality(token_val):
                         extracted.append(token_val)
             result.extracted_tokens = extracted
 

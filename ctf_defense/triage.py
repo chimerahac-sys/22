@@ -233,9 +233,9 @@ class SystemTriage:
 
 
 def run_triage(web_root: str = "/var/www/html") -> int:
-    triage = SystemTriage()
-    if web_root not in triage.WEBROOT_CANDIDATES:
-        triage.WEBROOT_CANDIDATES.insert(0, web_root)
+    triage = SystemTriage(target_webroot=web_root)
+    if web_root not in triage.COMMON_WEBROOTS:
+        triage.COMMON_WEBROOTS.insert(0, web_root)
     triage.print_summary()
     return 0
 

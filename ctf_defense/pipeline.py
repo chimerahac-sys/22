@@ -21,10 +21,11 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .colors import Colors, colorize, print_banner, safe_print
+from .environment import detect_environment, print_environment_summary
 from .doctor import EnvironmentDoctor
 from .backup import run_backup, ROOT_DEFAULT, BACKUP_DEFAULT
 from .hardening import run_hardening_apply
-from .micro_waf import generate_waf, _detect_web_env
+from .micro_waf import generate_waf
 from .webshell_finder import find_webshells
 from .scanner import run_scan, DB_DEFAULT, get_db
 from .health_checker import HealthChecker
@@ -46,25 +47,21 @@ def run_e2e_pipeline(
     pipeline_status = []
 
     # ─────────────────────────────────────────────────────────────────────
-    # STEP 1: Auto-Detect Environment
+    # STEP 1: Deep Universal Environment & Framework Detection
     # ─────────────────────────────────────────────────────────────────────
-    safe_print(colorize("▶ [1/7] Mendeteksi Environment & Stack Server...", Colors.BOLD + Colors.BRIGHT_CYAN))
-    env = _detect_web_env()
-    detected_root = env.get("webroot", web_root)
-    if not os.path.isdir(detected_root) and os.path.isdir(web_root):
-        detected_root = web_root
-    elif not os.path.isdir(detected_root) and os.path.isdir("."):
-        detected_root = os.path.abspath(".")
+    safe_print(colorize("▶ [1/7] Mendeteksi Environment, Stack & Framework...", Colors.BOLD + Colors.BRIGHT_CYAN))
+    env = detect_environment(custom_webroot=web_root)
+    detected_root = env.webroot
+    public_root = env.public_webroot
+    target_sla_port = start_port if start_port != 80 else env.primary_port
 
-    safe_print(f"   ├─ Web Server : {colorize(env['server'].upper(), Colors.GREEN)}")
-    safe_print(f"   ├─ Bahasa     : {colorize(env['language'].upper(), Colors.GREEN)}")
-    safe_print(f"   └─ Web Root   : {colorize(detected_root, Colors.BOLD + Colors.CYAN)}")
-    pipeline_status.append(("Environment Detection", "OK", f"{env['server']} + {env['language']}"))
+    print_environment_summary(env)
+    pipeline_status.append(("Environment Detection", "OK", f"{env.server.upper()} + {env.language.upper()} [{env.framework.upper()}]"))
 
     # ─────────────────────────────────────────────────────────────────────
     # STEP 2: Backup Webroot, Database & Git Baseline
     # ─────────────────────────────────────────────────────────────────────
-    safe_print(colorize("\n▶ [2/7] Mengamankan Backup Webroot, Database & Git Baseline...", Colors.BOLD + Colors.BRIGHT_CYAN))
+    safe_print(colorize("▶ [2/7] Mengamankan Backup Webroot, Database & Git Baseline...", Colors.BOLD + Colors.BRIGHT_CYAN))
     try:
         b_res = run_backup(detected_root, backup_dir)
         pipeline_status.append(("Backup & Git Baseline", "OK" if b_res == 0 else "WARN", "Web archive + DB dump saved"))
@@ -73,26 +70,27 @@ def run_e2e_pipeline(
         pipeline_status.append(("Backup & Git Baseline", "WARN", str(e)))
 
     # ─────────────────────────────────────────────────────────────────────
-    # STEP 3: Adaptive System Hardening
+    # STEP 3: Adaptive System Hardening (Preserving Framework Writable Dirs)
     # ─────────────────────────────────────────────────────────────────────
     safe_print(colorize("\n▶ [3/7] Mengaplikasikan System & Kernel Hardening...", Colors.BOLD + Colors.BRIGHT_CYAN))
     try:
-        run_hardening_apply(detected_root, lock_binaries=True)
-        pipeline_status.append(("System Hardening", "OK", "Sysctl + Compilers 700 + Permissions 644/755"))
+        run_hardening_apply(detected_root, lock_binaries=True, writable_dirs=env.writable_dirs)
+        pipeline_status.append(("System Hardening", "OK", f"Sysctl + Compilers 700 + Permissions 644/755 ({len(env.writable_dirs)} storage safe)"))
     except Exception as e:
         safe_print(colorize(f"   [!] Hardening warning: {e}", Colors.YELLOW))
         pipeline_status.append(("System Hardening", "WARN", "Partial (run with sudo for full)"))
 
     # ─────────────────────────────────────────────────────────────────────
-    # STEP 4: Auto-Generate & Deploy OWASP Top-10 Micro-WAF
+    # STEP 4: Auto-Generate & Deploy OWASP Top-10 Micro-WAF (Multi-Root)
     # ─────────────────────────────────────────────────────────────────────
     safe_print(colorize("\n▶ [4/7] Memasang OWASP Top-10 Micro-WAF (Anti-False-Positive)...", Colors.BOLD + Colors.BRIGHT_CYAN))
-    waf_path = "/tmp/ctf_waf.php" if env["language"] != "python" else os.path.join(detected_root, "ctf_waf.py")
+    waf_path = "/tmp/ctf_waf.php" if env.language != "python" else os.path.join(detected_root, "ctf_waf.py")
     try:
         generate_waf(
-            waf_type=env["language"] if env["language"] in ("php", "python") else "php",
+            waf_type=env.language if env.language in ("php", "python") else "php",
             output_path=waf_path,
             webroot=detected_root,
+            public_webroot=public_root,
             whitelist_ips=whitelist_ips,
             auto_deploy=True,
         )
@@ -133,21 +131,19 @@ def run_e2e_pipeline(
         pipeline_status.append(("Vulnerability Scan", "WARN", str(e)))
 
     # ─────────────────────────────────────────────────────────────────────
-    # STEP 7: SLA Health Verification
+    # STEP 7: SLA Health Verification (Active Port Adaptive)
     # ─────────────────────────────────────────────────────────────────────
     safe_print(colorize("\n▶ [7/7] Memverifikasi Ketersediaan Layanan Web (SLA Check)...", Colors.BOLD + Colors.BRIGHT_CYAN))
-    sla_ok = True
     try:
-        checker = HealthChecker(targets=["127.0.0.1"], port=start_port, path="/", delay=0.0)
+        checker = HealthChecker(targets=["127.0.0.1"], port=target_sla_port, path="/", delay=0.0)
         res = checker.run_all(continuous=False)
         if res and res[0].is_healthy:
-            safe_print(colorize(f"   [✓] Web Service UP (HTTP {res[0].status_code}) — SLA 100% AMAN!", Colors.BOLD + Colors.BRIGHT_GREEN))
-            pipeline_status.append(("SLA Health Check", "OK", f"HTTP {res[0].status_code} UP"))
+            safe_print(colorize(f"   [✓] Web Service UP (HTTP {res[0].status_code} on port {target_sla_port}) — SLA 100% AMAN!", Colors.BOLD + Colors.BRIGHT_GREEN))
+            pipeline_status.append(("SLA Health Check", "OK", f"HTTP {res[0].status_code} (Port {target_sla_port}) UP"))
         else:
             code = res[0].status_code if res else "DOWN"
-            safe_print(colorize(f"   [!] Web Service Status: {code}. Cek konfigurasi webroot!", Colors.BRIGHT_RED))
-            pipeline_status.append(("SLA Health Check", "WARN", f"Status: {code}"))
-            sla_ok = False
+            safe_print(colorize(f"   [!] Web Service Status: {code} on port {target_sla_port}. Cek konfigurasi webroot!", Colors.BRIGHT_RED))
+            pipeline_status.append(("SLA Health Check", "WARN", f"Status: {code} (Port {target_sla_port})"))
     except Exception as e:
         safe_print(colorize(f"   [!] SLA probe warning: {e}", Colors.YELLOW))
         pipeline_status.append(("SLA Health Check", "WARN", str(e)))

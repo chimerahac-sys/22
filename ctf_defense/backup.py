@@ -14,7 +14,7 @@ from .colors import Colors, colorize, print_banner, safe_print
 
 ROOT_DEFAULT = "/var/www/html"
 BACKUP_DEFAULT = os.path.expanduser("~/.adctf/backups")
-SKIP_DIRS = {"vendor", "node_modules", ".git", ".svn", "cache", "dist", "build", "framework", "tests", "fixtures", "storage", "third_party"}
+SKIP_DIRS = {"vendor", "node_modules", ".git", ".svn", "cache", "dist", "build", "framework", "tests", "fixtures", "storage", "third_party", "ctf_defense", "docs", ".adctf"}
 
 
 def file_sha256(path: str) -> str:

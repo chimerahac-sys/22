@@ -48,6 +48,8 @@ PHP_WAF_ADVANCED = r"""<?php
 
     // Whitelist SLA Checker — TAMBAHKAN IP game server panitia di sini
     $WHITELIST_IPS = [
+        '127.0.0.1',
+        '::1',
         // '10.0.0.1',       // contoh: IP SLA checker panitia
         // '172.16.0.1',     // contoh: IP game server
     ];
@@ -59,12 +61,20 @@ PHP_WAF_ADVANCED = r"""<?php
         'Uptime',
     ];
 
-    // ── GATHER ALL INPUT ──────────────────────────────────────────────
-    $ip     = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    // ── STEP 1: INSTANT WHITELIST CHECK (0-LATENCY, ZERO FALSE POSITIVE) ──
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+
+    // Bypass WAF seketika jika IP / UA terdaftar di whitelist (SLA Checker Aman 100%)
+    if (in_array($ip, $WHITELIST_IPS, true)) return;
+    foreach ($WHITELIST_UA_KEYWORDS as $kw) {
+        if (stripos($ua, $kw) !== false) return;
+    }
+
+    // ── STEP 2: GATHER INPUT ONLY FOR UNTRUSTED TRAFFIC ───────────────
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     $uri    = $_SERVER['REQUEST_URI'] ?? '/';
     $query  = $_SERVER['QUERY_STRING'] ?? '';
-    $ua     = $_SERVER['HTTP_USER_AGENT'] ?? '';
     $cookie = $_SERVER['HTTP_COOKIE'] ?? '';
     $referer= $_SERVER['HTTP_REFERER'] ?? '';
     $body   = '';
@@ -74,13 +84,6 @@ PHP_WAF_ADVANCED = r"""<?php
         $body = @file_get_contents('php://input');
         if ($body === false) $body = '';
         $body = substr($body, 0, 65536); // max 64KB
-    }
-
-    // ── WHITELIST CHECK ───────────────────────────────────────────────
-    // Bypass WAF untuk SLA checker agar tidak mengganggu skor
-    if (in_array($ip, $WHITELIST_IPS, true)) return;
-    foreach ($WHITELIST_UA_KEYWORDS as $kw) {
-        if (stripos($ua, $kw) !== false) return;
     }
 
     // ── MULTI-LAYER DECODE ────────────────────────────────────────────
@@ -104,7 +107,7 @@ PHP_WAF_ADVANCED = r"""<?php
     // Gabungkan semua vektor input setelah deep decode
     $raw_all = $uri . "\n" . $query . "\n" . $body . "\n" . $cookie . "\n" . $referer;
     $decoded  = waf_deep_decode($raw_all);
-    $combined = $raw_all . "\n" . $decoded;
+    $combined = $raw_all . "\n" . $decoded . "\n" . str_replace('+', ' ', $decoded);
 
     // ══════════════════════════════════════════════════════════════════
     //  OWASP TOP 10 DETECTION RULES (45+ High-Confidence Signatures)
@@ -224,6 +227,7 @@ PHP_WAF_ADVANCED = r"""<?php
 # =========================================================================
 # Python Detection Engine (Exported for Python Middleware & Testing)
 # =========================================================================
+import html
 import urllib.parse
 
 RULES = [
@@ -297,7 +301,11 @@ def _deep_decode(s: str) -> str:
             break
         prev = decoded
         decoded = urllib.parse.unquote(decoded)
+    decoded = html.unescape(decoded)
     decoded = decoded.replace("\x00", "").replace("\\", "/")
+    plus = decoded.replace("+", " ")
+    if plus != decoded:
+        return decoded + "\n" + plus
     return decoded
 
 def _check_payload(combined: str):
@@ -322,11 +330,8 @@ INSTALL untuk WSGI generik:
     app = WafMiddleware(app)
 """
 
+import html
 import json
-import os
-import re
-import urllib.parse
-from datetime import datetime
 import os
 import re
 import urllib.parse
@@ -416,7 +421,11 @@ def _deep_decode(s):
             break
         prev = decoded
         decoded = urllib.parse.unquote(decoded)
+    decoded = html.unescape(decoded)
     decoded = decoded.replace("\x00", "").replace("\\", "/")
+    plus = decoded.replace("+", " ")
+    if plus != decoded:
+        return decoded + "\n" + plus
     return decoded
 
 
@@ -584,45 +593,37 @@ def _find_php_ini() -> list:
     return candidates
 
 
-def _detect_web_env() -> dict:
-    """Auto-detect running web server environment."""
-    info = {"server": "unknown", "language": "unknown", "webroot": "/var/www/html", "php_ini": []}
+from .environment import detect_environment, EnvironmentInfo
 
-    try:
-        ps = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=2).stdout.lower()
-    except Exception:
-        ps = ""
 
-    if "nginx" in ps:
-        info["server"] = "nginx"
-    elif "apache" in ps or "httpd" in ps:
-        info["server"] = "apache"
-
-    if "php-fpm" in ps or "php" in ps:
-        info["language"] = "php"
-    elif "gunicorn" in ps or "uvicorn" in ps or "flask" in ps or "django" in ps:
-        info["language"] = "python"
-    elif "node" in ps:
-        info["language"] = "node"
-
-    for candidate in ["/var/www/html", "/var/www", "/app", "/srv/http", "/home/www"]:
-        if os.path.isdir(candidate):
-            info["webroot"] = candidate
-            break
-
-    info["php_ini"] = _find_php_ini()
-    return info
+def _detect_web_env(custom_webroot: str = "") -> dict:
+    """Auto-detect running web server environment using universal detector."""
+    env_info = detect_environment(custom_webroot)
+    return {
+        "server": env_info.server,
+        "language": env_info.language,
+        "framework": env_info.framework,
+        "webroot": env_info.webroot,
+        "public_webroot": env_info.public_webroot,
+        "php_ini": env_info.php_ini_paths,
+        "primary_port": env_info.primary_port,
+        "active_ports": env_info.active_ports,
+        "writable_dirs": env_info.writable_dirs,
+    }
 
 
 def generate_waf(waf_type: str = "auto", output_path: str = "", webroot: str = "",
-                 whitelist_ips: list = None, auto_deploy: bool = False) -> None:
-    """Generate and optionally auto-deploy the advanced WAF."""
-    env = _detect_web_env()
+                 public_webroot: str = "", whitelist_ips: list = None, auto_deploy: bool = False) -> None:
+    """Generate and optionally auto-deploy the advanced WAF with framework public_webroot support."""
+    env = _detect_web_env(webroot)
 
     if waf_type == "auto":
         waf_type = env["language"] if env["language"] in ("php", "python") else "php"
 
     if not webroot:
+        webroot = env["webroot"]
+    if not public_webroot:
+        public_webroot = env.get("public_webroot", webroot)
         webroot = env["webroot"]
 
     # Determine output path
@@ -652,8 +653,10 @@ def generate_waf(waf_type: str = "auto", output_path: str = "", webroot: str = "
     p = Path(output_path)
 
     print_banner("Advanced OWASP Top-10 Micro-WAF", f"{waf_type.upper()} Shield Generator")
-    safe_print(f" [*] Environment      : {colorize(env['server'], Colors.CYAN)} + {colorize(env['language'], Colors.CYAN)}")
+    safe_print(f" [*] Environment      : {colorize(env['server'], Colors.CYAN)} + {colorize(env['language'], Colors.CYAN)} [{colorize(env.get('framework', 'native').upper(), Colors.YELLOW)}]")
     safe_print(f" [*] Web Root         : {colorize(webroot, Colors.CYAN)}")
+    if public_webroot != webroot:
+        safe_print(f" [*] Public Root      : {colorize(public_webroot, Colors.BOLD + Colors.BRIGHT_GREEN)}")
     safe_print(f" [*] WAF Type         : {colorize(waf_type.upper(), Colors.BOLD + Colors.BRIGHT_GREEN)}")
     safe_print(f" [*] Output File      : {colorize(str(p), Colors.BOLD + Colors.GREEN)}")
     safe_print(f" [*] Block Log        : {colorize('/tmp/waf_blocked.log', Colors.CYAN)}")
@@ -698,30 +701,63 @@ def generate_waf(waf_type: str = "auto", output_path: str = "", webroot: str = "
         safe_print(colorize("\n [*] Mencoba auto-deploy WAF...", Colors.YELLOW))
         deployed = False
 
-        # Method 1: .user.ini di webroot (paling aman, no restart needed)
-        user_ini = Path(webroot) / ".user.ini"
-        try:
-            existing = user_ini.read_text(encoding="utf-8") if user_ini.exists() else ""
-            if "auto_prepend_file" not in existing:
-                with open(user_ini, "a", encoding="utf-8") as f:
-                    f.write(f"\nauto_prepend_file = {p.resolve()}\n")
-                safe_print(colorize(f"   [✓] Terpasang via {user_ini} (auto, tanpa restart)", Colors.BRIGHT_GREEN))
-                deployed = True
-        except PermissionError:
-            safe_print(f"   [!] Tidak punya izin tulis ke {user_ini}")
+        # Deploy to both public webroot (e.g. /public in Laravel/CI4/Symfony) and root webroot
+        target_roots = [public_webroot] if public_webroot else [webroot]
+        if webroot not in target_roots:
+            target_roots.append(webroot)
 
-        # Method 2: .htaccess (Apache)
-        if not deployed and env["server"] == "apache":
-            htaccess = Path(webroot) / ".htaccess"
+        for tr in target_roots:
+            if not os.path.isdir(tr):
+                continue
+
+            # Method 1: .user.ini (paling aman, no restart needed)
+            user_ini = Path(tr) / ".user.ini"
             try:
-                existing = htaccess.read_text(encoding="utf-8") if htaccess.exists() else ""
+                existing = user_ini.read_text(encoding="utf-8") if user_ini.exists() else ""
                 if "auto_prepend_file" not in existing:
-                    with open(htaccess, "a", encoding="utf-8") as f:
-                        f.write(f"\nphp_value auto_prepend_file {p.resolve()}\n")
-                    safe_print(colorize(f"   [✓] Terpasang via {htaccess}", Colors.BRIGHT_GREEN))
+                    with open(user_ini, "a", encoding="utf-8") as f:
+                        f.write(f"\nauto_prepend_file = {p.resolve()}\n")
+                    safe_print(colorize(f"   [✓] Terpasang via {user_ini} (auto, tanpa restart)", Colors.BRIGHT_GREEN))
                     deployed = True
             except PermissionError:
-                pass
+                safe_print(f"   [!] Tidak punya izin tulis ke {user_ini}")
+
+            # Method 2: index.php direct injection (Instant 0-second activation for PHP-FPM)
+            index_php = Path(tr) / "index.php"
+            if index_php.exists():
+                try:
+                    idx_content = index_php.read_text(encoding="utf-8", errors="replace")
+                    waf_include = f"<?php @require_once '{p.resolve()}'; ?>"
+                    if str(p.resolve()) not in idx_content:
+                        # Backup original index.php
+                        idx_bak = Path(tr) / "index.php.wafbak"
+                        if not idx_bak.exists():
+                            idx_bak.write_text(idx_content, encoding="utf-8")
+                        
+                        # Prepend WAF require to index.php
+                        if idx_content.startswith("<?php"):
+                            new_content = idx_content.replace("<?php", f"<?php\n{waf_include}\n", 1)
+                        else:
+                            new_content = f"{waf_include}\n{idx_content}"
+                        
+                        index_php.write_text(new_content, encoding="utf-8")
+                        safe_print(colorize(f"   [✓] Terpasang langsung di {index_php} (0-detik aktif)", Colors.BRIGHT_GREEN))
+                        deployed = True
+                except Exception as e:
+                    safe_print(f"   [!] Gagal inject {index_php}: {e}")
+
+            # Method 3: .htaccess (Apache)
+            if env["server"] == "apache":
+                htaccess = Path(tr) / ".htaccess"
+                try:
+                    existing = htaccess.read_text(encoding="utf-8") if htaccess.exists() else ""
+                    if "auto_prepend_file" not in existing:
+                        with open(htaccess, "a", encoding="utf-8") as f:
+                            f.write(f"\nphp_value auto_prepend_file {p.resolve()}\n")
+                        safe_print(colorize(f"   [✓] Terpasang via {htaccess}", Colors.BRIGHT_GREEN))
+                        deployed = True
+                except PermissionError:
+                    pass
 
         if not deployed:
             safe_print(colorize("   [!] Auto-deploy gagal (permission). Pasang manual:", Colors.YELLOW))
