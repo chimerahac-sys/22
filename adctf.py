@@ -4,6 +4,14 @@
 Zero-dependency local defense, vulnerability scanner, guided patcher,
 OWASP Top-10 Micro-WAF, real-time log sniffer, replay engine, targeted probe,
 hardening auditor, firewall builder, webshell hunter, 1-click autopatcher, and autonomous copilot.
+
+MODIFIED FOR JCC 2026 (Jatim Cybersecurity Competition):
+- Compliant with Attack-Defense format rules
+- No automated scanners (sqlmap, burp, dirb) - manual probing only
+- WireGuard VPN integration for target access
+- JCC API endpoint support for flag submission
+- SSH-based patching workflow
+- Service management via make commands
 """
 
 import argparse
@@ -38,23 +46,27 @@ from ctf_defense.exploit_payloads import print_payload_summary, get_payloads_for
 
 def interactive_menu():
     """Render interactive beginner-friendly terminal menu."""
-    print_banner("AD-CTF Master Battle Station", "Unified Attack-Defense Framework v3.3")
+    print_banner("AD-CTF Master Battle Station", "JCC 2026 Edition - Attack Defense Framework v4.0")
+    safe_print(colorize("⚠️  PENTING: Dilarang menggunakan automated scanner (sqlmap, burp, dirb)!", Colors.BG_RED + Colors.BOLD + Colors.WHITE))
+    safe_print(colorize("   Gunakan hanya manual probing dan LLM Web (Free/Paid) sesuai aturan JCC 2026.\n", Colors.YELLOW))
     safe_print("Pilih mode eksekusi:")
     safe_print(colorize("  [ENTER / 1] ⚡ 1-COMMAND AUTO-DEFENSE (Full End-to-End: Backup + Hardening + WAF + Scan + SLA)", Colors.BOLD + Colors.BRIGHT_GREEN))
-    safe_print(colorize("  [2]         ★ AUTOPILOT BATTLE MODE (Live Radar + Anti-Loop Replay + Auto-Submit)", Colors.BOLD + Colors.BRIGHT_CYAN))
+    safe_print(colorize("  [2]         ★ AUTOPILOT BATTLE MODE (Live Radar + Anti-Loop Replay + Auto-Submit) - MANUAL ONLY", Colors.BOLD + Colors.BRIGHT_CYAN))
     safe_print(colorize("  [3]         🩹 1-Click Auto-Patcher (Bungkus LFI/SQLi/RCE dengan backup & SLA rollback)", Colors.BOLD + Colors.BRIGHT_YELLOW))
     safe_print(colorize("  [4]         🩺 Pre-Flight Doctor & Triage Recon", Colors.YELLOW))
     safe_print(colorize("  [5]         🛡️  Hardening (Sysctl + Compiler Lock 700 + Permissions)", Colors.YELLOW))
     safe_print(colorize("  [6]         🧱 Firewall & UFW Setup (Allow Web/SSH + Whitelist SLA)", Colors.YELLOW))
     safe_print(colorize("  [7]         🕷️  Deep Webshell & Backdoor Hunter", Colors.YELLOW))
-    safe_print(colorize("  [8]         🔍 Source Code Vuln Scanner & Guided Patcher", Colors.YELLOW))
+    safe_print(colorize("  [8]         🔍 Source Code Vuln Scanner & Guided Patcher (MANUAL REVIEW REQUIRED)", Colors.BOLD + Colors.YELLOW))
     safe_print(colorize("  [9]         📡 Real-Time Log Sniffer & Attack Radar", Colors.YELLOW))
     safe_print(colorize("  [10]        🛡️  OWASP Top-10 Micro-WAF Generator & Deployer", Colors.YELLOW))
-    safe_print(colorize("  [11]        ⚡ Exploit Replay ke Subnet Lawan (Multi-Threaded)", Colors.YELLOW))
-    safe_print(colorize("  [12]        🎯 Targeted Single-Shot Exploit Probe", Colors.YELLOW))
-    safe_print(colorize("  [13]        🚩 Submit Flag Gateway (dengan Retry Queue)", Colors.YELLOW))
+    safe_print(colorize("  [11]        ⚡ Manual Exploit Replay ke Subnet Lawan (Rate Limited, No DoS)", Colors.BOLD + Colors.YELLOW))
+    safe_print(colorize("  [12]        🎯 Targeted Single-Shot Exploit Probe (MANUAL - Compliant with JCC Rules)", Colors.BOLD + Colors.YELLOW))
+    safe_print(colorize("  [13]        🚩 Submit Flag Gateway (JCC API Compatible)", Colors.BOLD + Colors.BRIGHT_GREEN))
     safe_print(colorize("  [14]        📖 Emergency Code Patching Cheatsheet", Colors.YELLOW))
     safe_print(colorize("  [15]        🎯 Exploit Payload Arsenal (SQLi, LFI, RCE, SSTI, Deser)", Colors.YELLOW))
+    safe_print(colorize("  [16]        🔑 WireGuard VPN Status & Target IP Fetcher (JCC API)", Colors.BOLD + Colors.CYAN))
+    safe_print(colorize("  [17]        🔧 Service Management (make start/restart/stop/compile)", Colors.BOLD + Colors.CYAN))
     safe_print(colorize("  [0]         Keluar", Colors.DIM))
     safe_print(colorize("-" * 75, Colors.DIM))
 
@@ -67,9 +79,11 @@ def interactive_menu():
     if choice in ("", "1", "start", "init", "auto-defend", "defend"):
         run_e2e_pipeline()
     elif choice in ("2", "auto", "autopilot", "*"):
-        targets = input("Target subnet musuh (contoh: 10.60.1-20.1): ").strip()
-        submit_url = input("URL submit flag game server (kosongkan jika tidak ada): ").strip()
-        token = input("Team Token (kosongkan jika tidak ada): ").strip()
+        targets = input("Target subnet musuh (contoh: 10.60.1-20.1 atau dari JCC API): ").strip()
+        submit_url = input("URL submit flag game server (default: https://jcc.jatimprov.go.id/api/Game/<GAME_ID>/Ad/Submit): ").strip()
+        token = input("API Token (dari A&D Toolkit interface): ").strip()
+        if not submit_url:
+            submit_url = "https://jcc.jatimprov.go.id/api/Game/GAME_ID/Ad/Submit"
         run_autopilot(targets_spec=targets, submit_url=submit_url if submit_url else None, token=token if token else None)
     elif choice in ("3", "autopatch", "patch-auto"):
         apply_safe_autopatch(ROOT_DEFAULT, DB_DEFAULT)
@@ -94,6 +108,8 @@ def interactive_menu():
         except (KeyboardInterrupt, EOFError):
             return
         target_root = target_in if target_in else default_target
+        safe_print(colorize("\n⚠️  PERINGATAN: Hasil scan harus di-review MANUAL sebelum patching!", Colors.BG_YELLOW + Colors.BOLD + Colors.BLACK))
+        safe_print(colorize("   Dilarang menggunakan auto-patching tanpa verifikasi!\n", Colors.YELLOW))
         run_scan(target_root, DB_DEFAULT)
         run_next_patch(DB_DEFAULT)
     elif choice == "9":
@@ -102,20 +118,89 @@ def interactive_menu():
         generate_waf("php", "/tmp/ctf_waf.php", ROOT_DEFAULT, auto_deploy=True)
     elif choice == "11":
         targets = input("Target subnet/IP (e.g. 10.60.1-20.1): ").strip()
-        replay_attacks([targets] if targets else ["127.0.0.1"])
+        delay_input = input("Delay antar request (detik, min 1.0 untuk hindari DoS) [1.5]: ").strip()
+        delay = float(delay_input) if delay_input else 1.5
+        if delay < 1.0:
+            safe_print(colorize("⚠️  Delay terlalu cepat! Menggunakan 1.5s untuk menghindari DoS.", Colors.YELLOW))
+            delay = 1.5
+        replay_attacks([targets] if targets else ["127.0.0.1"], delay=delay)
     elif choice == "12":
         targets = input("Target subnet/IP (e.g. 10.60.1-20.1): ").strip()
         ep = input("Endpoint (default /): ").strip() or "/"
         param = input("Parameter name (e.g. id): ").strip() or "id"
-        payload = input("Payload: ").strip() or "1' UNION SELECT 1,2,3--"
-        run_targeted_probe(expand_target_ips(targets) if targets else ["127.0.0.1"], endpoint=ep, param=param, payload=payload)
-    elif choice == "13":
-        url = input("URL submit flag: ").strip() or "http://10.0.0.1/api/submit_flag"
-        submit_flags(url=url)
+        payload = input("Payload (MANUAL INPUT - jangan gunakan automated scanner): ").strip() or "1' UNION SELECT 1,2,3--"
+        delay_input = input("Delay antar target (detik, min 1.0) [1.5]: ").strip()
+        delay = float(delay_input) if delay_input else 1.5
+        if delay < 1.0:
+            delay = 1.5
+        run_targeted_probe(expand_target_ips(targets) if targets else ["127.0.0.1"], endpoint=ep, param=param, payload=payload, delay=delay)
+    elif choice in ("13", "submit", "flag"):
+        safe_print(colorize("\n📌 INFO: Format submit flag JCC 2026:", Colors.CYAN))
+        safe_print("   API: POST https://jcc.jatimprov.go.id/api/Game/<GAME_ID>/Ad/Submit")
+        safe_print("   Header: Authorization: Bearer <API_TOKEN>")
+        safe_print("   Body: {\"flags\":[\"flag{...}\"]}\n")
+        url = input("URL submit flag (default: https://jcc.jatimprov.go.id/api/Game/GAME_ID/Ad/Submit): ").strip()
+        token = input("API Token: ").strip()
+        if not url:
+            url = "https://jcc.jatimprov.go.id/api/Game/GAME_ID/Ad/Submit"
+        submit_flags(url=url, token=token)
     elif choice == "14":
         show_all_patch_guides()
     elif choice in ("15", "arsenal", "payloads"):
         print_payload_summary()
+    elif choice in ("16", "wireguard", "vpn", "targets"):
+        safe_print(colorize("\n🔑 WireGuard VPN Configuration for JCC 2026", Colors.BOLD + Colors.CYAN))
+        safe_print("1. Download konfigurasi WireGuard dari platform JCC")
+        safe_print("2. Install WireGuard sesuai OS Anda")
+        safe_print("3. Import file .conf ke WireGuard")
+        safe_print("4. Aktifkan koneksi VPN")
+        safe_print("")
+        game_id = input("Masukkan GAME_ID (atau kosongkan untuk skip): ").strip()
+        api_token = input("Masukkan API_TOKEN: ").strip()
+        if game_id and api_token:
+            safe_print(f"\n[*] Fetching target IPs untuk Game ID: {game_id}")
+            import urllib.request
+            import json
+            try:
+                req = urllib.request.Request(
+                    f"https://jcc.jatimprov.go.id/api/Game/{game_id}/Ad/Targets",
+                    headers={"Authorization": f"Bearer {api_token}"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    safe_print(colorize(f"\n[✓] Berhasil mendapatkan {len(data.get('targets', []))} target IPs:", Colors.GREEN))
+                    for idx, target in enumerate(data.get('targets', [])[:20], 1):
+                        ip = target.get('ip', 'N/A')
+                        safe_print(f"   {idx}. {ip}")
+                    if len(data.get('targets', [])) > 20:
+                        safe_print(f"   ... dan {len(data.get('targets', [])) - 20} lainnya")
+            except Exception as e:
+                safe_print(colorize(f"[✗] Error fetching targets: {e}", Colors.RED))
+        else:
+            safe_print(colorize("\n[!] Skip fetch targets. Pastikan VPN aktif sebelum menyerang.", Colors.YELLOW))
+    elif choice in ("17", "service", "make"):
+        safe_print(colorize("\n🔧 Service Management Commands (JCC 2026)", Colors.BOLD + Colors.CYAN))
+        safe_print("Perintah yang tersedia:")
+        safe_print("  - make start    : Menjalankan challenge")
+        safe_print("  - make restart  : Restart challenge setelah patching")
+        safe_print("  - make stop     : Menghentikan challenge")
+        safe_print("  - make compile  : Kompilasi binary (khusus kategori pwn)")
+        safe_print("")
+        cmd = input("Jalankan perintah (start/restart/stop/compile) [restart]: ").strip().lower()
+        if cmd in ("start", "restart", "stop", "compile"):
+            import subprocess
+            try:
+                result = subprocess.run(["make", cmd], capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    safe_print(colorize(f"[✓] make {cmd} berhasil!", Colors.GREEN))
+                else:
+                    safe_print(colorize(f"[✗] make {cmd} gagal: {result.stderr}", Colors.RED))
+                if result.stdout:
+                    safe_print(f"Output:\n{result.stdout}")
+            except Exception as e:
+                safe_print(colorize(f"[✗] Error menjalankan make {cmd}: {e}", Colors.RED))
+        else:
+            safe_print(colorize("[!] Perintah tidak valid.", Colors.YELLOW))
 
 
 def main():
@@ -278,10 +363,10 @@ def main():
         delay=a.delay,
     ))
 
-    # 16. submit
-    x = sub.add_parser("submit", aliases=["submit-flag"], help="Submit captured flags to Game Server")
-    x.add_argument("--url", "-u", default="http://10.0.0.1/api/submit_flag")
-    x.add_argument("--token", "-t", default=None)
+    # 16. submit - JCC 2026 API compatible
+    x = sub.add_parser("submit", aliases=["submit-flag"], help="Submit captured flags to JCC 2026 Game Server")
+    x.add_argument("--url", "-u", default="https://jcc.jatimprov.go.id/api/Game/GAME_ID/Ad/Submit", help="JCC API endpoint")
+    x.add_argument("--token", "-t", default=None, help="API Token (Bearer)")
     x.add_argument("--flag", "-f", default=None)
     x.add_argument("--file", default="captured_flags.txt")
     x.add_argument("--pattern", default=None, help="Custom flag regex pattern")
