@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Automated, Reliable Flag Submitter with Persistent SQLite Retry Queue for CTF.
 
+MODIFIED FOR JCC 2026 (Jatim Cybersecurity Competition):
+- Supports JCC API endpoint: POST https://jcc.jatimprov.go.id/api/Game/<GAME_ID>/Ad/Submit
+- Header: Authorization: Bearer <API_TOKEN>
+- Body: {"flags":["flag{...}", "flag{...}"]}
+- Response handling: accepted, duplicate, wrong, expired, self_attack, not_started, paused, ended
+
 Supports:
   - HTTP REST API (POST JSON / Form Data)
   - TCP Raw Socket (e.g. nc flags.ctf.game 1337)
@@ -95,13 +101,14 @@ class FlagSubmitter:
         tok = token or self.token
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "CTF-FlagSubmitter/3.0",
+            "User-Agent": "JCC-FlagSubmitter/4.0",
         }
         if tok:
             headers["Authorization"] = f"Bearer {tok}"
             headers["X-Team-Token"] = tok
 
-        payload = {"flag": flag, "token": tok}
+        # JCC 2026 API format: POST {"flags":["flag{...}"]}
+        payload = {"flags": [flag]}
 
         try:
             req = urllib.request.Request(
@@ -114,17 +121,27 @@ class FlagSubmitter:
                 resp_text = resp.read().decode("utf-8", errors="replace")
                 low = resp_text.lower()
 
-                # Classification
-                if any(w in low for w in ("success", "accepted", "correct", "valid", "earned", "point")):
-                    return True, resp_text, True
-                elif any(w in low for w in ("already", "duplicate", "dup", "claimed")):
-                    return False, f"Already submitted: {resp_text[:40]}", True
-                elif any(w in low for w in ("invalid", "wrong", "fake", "bad flag")):
-                    return False, f"Invalid: {resp_text[:40]}", True
-                elif any(w in low for w in ("expired", "old", "round ended")):
-                    return False, f"Expired: {resp_text[:40]}", True
+                # JCC 2026 Response Classification
+                if "accepted" in low:
+                    return True, "accepted - Flag diterima dan dicatat untuk skor", True
+                elif "duplicate" in low:
+                    return False, "duplicate - Flag sudah pernah diterima dari tim ini", True
+                elif "wrong" in low:
+                    return False, "wrong - Flag tidak dikenali atau tidak valid", True
+                elif "expired" in low:
+                    return False, "expired - Masa berlaku flag telah berakhir", True
+                elif "self_attack" in low or "self" in low:
+                    return False, "self_attack - Flag berasal dari target milik sendiri", True
+                elif "not_started" in low:
+                    return False, "not_started - Pertandingan belum dimulai", False
+                elif "paused" in low:
+                    return False, "paused - Penerimaan flag sedang dihentikan sementara", False
+                elif "ended" in low:
+                    return False, "ended - Pertandingan telah berakhir", True
+                elif any(w in low for w in ("success", "correct", "valid", "earned", "point")):
+                    return True, resp_text[:50], True
                 else:
-                    return True, resp_text, True
+                    return True, resp_text[:50], True
         except urllib.error.HTTPError as e:
             code = e.code
             err_text = e.read().decode("utf-8", errors="replace")
@@ -207,7 +224,7 @@ class FlagSubmitter:
 
 
 def submit_flags(
-    url: str = "http://10.0.0.1/api/submit_flag",
+    url: str = "https://jcc.jatimprov.go.id/api/Game/GAME_ID/Ad/Submit",
     token: Optional[str] = None,
     flag: Optional[str] = None,
     flag_file: str = "captured_flags.txt",
@@ -216,7 +233,7 @@ def submit_flags(
     db_path: str = QUEUE_DB_DEFAULT,
     flag_pattern: Optional[str] = None,
 ) -> int:
-    """Entrypoint to enqueue flags and flush the queue to game server."""
+    """Entrypoint to enqueue flags and flush the queue to JCC 2026 game server."""
     submitter = FlagSubmitter(
         server_url=url,
         token=token,
@@ -239,8 +256,18 @@ def submit_flags(
                     submitter.enqueue_flag(match, token)
                     enqueued += 1
 
-    print_banner("Automated Flag Submitter", "Scoring Engine Gateway with Retry Queue")
+    print_banner("JCC 2026 Flag Submitter", "Official Jatim Cybersecurity Competition Gateway")
     safe_print(f"[*] Enqueued Flags    : {enqueued} candidates")
+    safe_print(f"[*] Target Endpoint   : {url if not tcp_host else f'{tcp_host}:{tcp_port}'}")
+    safe_print(colorize("-" * 75, Colors.DIM))
+    safe_print(colorize("[*] Format API JCC 2026: POST {\"flags\":[\"flag{...}\"]}", Colors.CYAN))
+    safe_print(colorize("[*] Header: Authorization: Bearer <API_TOKEN>", Colors.CYAN))
+    safe_print(colorize("-" * 75, Colors.DIM))
+
+    ok_count = submitter.process_queue()
+    safe_print(colorize("-" * 75, Colors.DIM))
+    safe_print(f"[*] Selesai. Total flag diterima: {colorize(str(ok_count), Colors.BOLD + Colors.BRIGHT_GREEN)}\n")
+    return 0
     safe_print(f"[*] Target Endpoint   : {url if not tcp_host else f'{tcp_host}:{tcp_port}'}")
     safe_print(colorize("-" * 75, Colors.DIM))
 
